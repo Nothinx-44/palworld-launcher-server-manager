@@ -915,6 +915,30 @@ app.post('/api/backups/:filename/restore', requireAuth, requireManager, async (r
   }
 });
 
+// Réinitialise le monde : supprime la sauvegarde courante (SAVE_PATH). Palworld régénère un monde
+// neuf au prochain démarrage. Destructif et irréversible → admin uniquement, serveur éteint, et une
+// sauvegarde de sécurité du monde actuel est prise AVANT (on échoue si elle rate : c'est le seul
+// filet avant d'effacer). Le dossier SAVE_PATH lui-même est conservé, seul son contenu est vidé.
+app.post('/api/world/reset', requireAuth, requireAdmin, async (req, res) => {
+  if (restartLocked()) return res.status(409).json({ error: 'restart_in_progress' });
+  if (await isGameServerActive()) return res.status(409).json({ error: 'server_running' });
+  const savePath = process.env.SAVE_PATH;
+  if (!savePath || !fs.existsSync(savePath)) return res.status(400).json({ error: 'not_configured' });
+  try {
+    const safetyFilename = await makeBackup();
+    pruneBackups();
+    for (const entry of fs.readdirSync(savePath)) {
+      fs.rmSync(path.join(savePath, entry), { recursive: true, force: true });
+    }
+    activityLog.log(req.session.user.username, 'world-reset', safetyFilename);
+    discord.notify('worldReset', { user: req.session.user.username, safetyFilename }, 'backups');
+    res.json({ ok: true, safetyFilename });
+  } catch (err) {
+    activityLog.log(req.session.user.username, 'world-reset-error', String(err.message || err));
+    res.status(500).json({ error: String(err.message || err) });
+  }
+});
+
 // Planning des sauvegardes automatiques (lecture pour tous, modification pour admin/user)
 app.get('/api/backup/schedule', requireAuth, (req, res) => {
   res.json({ schedule: backupSchedule.load(), crons: backupSchedule.toCronExpressions() });

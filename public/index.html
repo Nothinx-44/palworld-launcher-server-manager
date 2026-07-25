@@ -295,6 +295,15 @@
           <p class="empty" id="bkSummary" style="margin-top:10px;"></p>
         </div>
       </div>
+
+      <div class="panel danger-zone" data-admin-only style="margin-top:16px;">
+        <h2>Zone danger</h2>
+        <p class="muted-hint">Réinitialiser le monde supprime la sauvegarde actuelle : à la prochaine mise en route, le serveur repart d'un monde tout neuf (progression, bases et niveaux perdus). Une sauvegarde de sécurité est prise automatiquement avant. Le serveur doit être arrêté.</p>
+        <div class="btn-row" style="margin-top:12px;">
+          <button class="action danger" id="resetWorldBtn" type="button">Réinitialiser le monde (supprimer la sauvegarde)</button>
+        </div>
+        <p class="muted-hint" id="resetWorldHint" style="display:none;"></p>
+      </div>
     </section>
 
     <!-- ============ RÉGLAGES (admin) ============ -->
@@ -365,6 +374,8 @@
                 <option value="es">Español</option>
                 <option value="ko">한국어</option>
                 <option value="de">Deutsch</option>
+                <option value="ja">日本語</option>
+                <option value="pt">Português</option>
               </select>
             </div>
             <div class="field-block">

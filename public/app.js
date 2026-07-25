@@ -464,6 +464,9 @@ function renderActivityPage() {
     'console-enable': 'a activé la console serveur',
     'chat-send': 'a écrit dans le chat du jeu',
     'backup-restore-error': 'a échoué à restaurer une sauvegarde',
+    'world-reset': 'a réinitialisé le monde',
+    'world-reset-error': 'a échoué à réinitialiser le monde',
+    'crash-loop': 'boucle de crash détectée (intervention manuelle conseillée)',
     'plugin-install': 'a installé un plugin',
     'plugin-uninstall': 'a désinstallé un plugin',
     'paldefender-token-set': 'a enregistré le jeton API PalDefender',
@@ -996,6 +999,34 @@ document.getElementById('saveWorldBtn').addEventListener('click', async () => {
   const r = await api('POST', '/api/save');
   showToast(r && r.ok ? 'Monde sauvegardé' : actionError(r, 'Échec de la sauvegarde'));
   refreshActivity();
+});
+
+// Réinitialisation du monde (admin) : action irréversible → double confirmation. Le serveur prend
+// une sauvegarde de sécurité avant d'effacer, mais on garde deux garde-fous côté UI par prudence.
+const resetWorldBtn = document.getElementById('resetWorldBtn');
+if (resetWorldBtn) resetWorldBtn.addEventListener('click', async () => {
+  if (!confirm('Réinitialiser le monde ? La sauvegarde actuelle sera supprimée et le serveur repartira d\'un monde neuf au prochain démarrage. Une sauvegarde de sécurité est prise avant. Le serveur doit être arrêté.')) return;
+  if (!confirm('Dernière confirmation : supprimer définitivement le monde actuel ?')) return;
+  const hint = document.getElementById('resetWorldHint');
+  resetWorldBtn.disabled = true;
+  showToast('Réinitialisation du monde…');
+  const r = await api('POST', '/api/world/reset');
+  resetWorldBtn.disabled = false;
+  if (r && r.ok) {
+    showToast('Monde réinitialisé');
+    if (hint) {
+      hint.textContent = 'Ancien monde conservé dans une sauvegarde de sécurité. Démarre le serveur pour générer un nouveau monde.';
+      hint.style.display = 'block';
+    }
+    refreshBackups();
+    refreshActivity();
+  } else {
+    showToast(
+      r && r.error === 'server_running' ? 'Impossible : arrête le serveur d\'abord'
+      : r && r.error === 'restart_in_progress' ? 'Impossible : un redémarrage est déjà en cours'
+      : r && r.error === 'not_configured' ? 'SAVE_PATH/BACKUP_DIR non configurés'
+      : failMsg('Échec de la réinitialisation', r));
+  }
 });
 
 document.getElementById('forceStopBtn').addEventListener('click', async () => {
