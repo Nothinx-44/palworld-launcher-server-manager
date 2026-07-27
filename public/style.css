@@ -229,6 +229,11 @@ button.action:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .panel.danger-zone { border-color: var(--danger); }
 
+.perf-sep { display: inline-block; width: 14px; }
+#diagnosticList { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+#diagnosticList li { padding: 6px 4px; border-bottom: 1px solid var(--line); font-size: 0.9rem; }
+#diagnosticList li.diag-fail { color: var(--danger); }
+
 table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
 th { text-align: left; color: var(--muted); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--line); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; }
 td { padding: 8px; border-bottom: 1px solid var(--line); }
@@ -500,8 +505,8 @@ select.role-select {
 
 /* ---------- Graphique de fréquentation ---------- */
 .chart-range-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
-.chart-range-btn { padding: 4px 12px; font-size: 0.8rem; }
-.chart-range-btn.active { border-color: var(--accent); color: var(--accent); }
+.chart-range-btn, .perf-metric-btn, .perf-range-btn { padding: 4px 12px; font-size: 0.8rem; }
+.chart-range-btn.active, .perf-metric-btn.active, .perf-range-btn.active { border-color: var(--accent); color: var(--accent); }
 .chart-wrap { position: relative; }
 .chart-wrap canvas { width: 100%; height: 160px; display: block; cursor: crosshair; }
 .chart-tooltip {

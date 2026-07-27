@@ -467,6 +467,9 @@ function renderActivityPage() {
     'world-reset': 'a réinitialisé le monde',
     'world-reset-error': 'a échoué à réinitialiser le monde',
     'crash-loop': 'boucle de crash détectée (intervention manuelle conseillée)',
+    'auto-announce': 'a diffusé une annonce récurrente',
+    'announce-schedule-change': 'a modifié les annonces récurrentes',
+    'player-note': 'a modifié une note de joueur',
     'plugin-install': 'a installé un plugin',
     'plugin-uninstall': 'a désinstallé un plugin',
     'paldefender-token-set': 'a enregistré le jeton API PalDefender',
@@ -647,6 +650,22 @@ function showPlayerMenu(anchorEl, userId, name) {
   menu.appendChild(statsBtn);
 
   if (isManager()) {
+    const noteBtn = document.createElement('button');
+    noteBtn.type = 'button';
+    noteBtn.textContent = '📝 Note';
+    noteBtn.addEventListener('click', async () => {
+      closePlayerMenu();
+      const cur = await api('GET', `/api/players/${encodeURIComponent(userId)}/note`);
+      const existing = (cur && cur.note && cur.note.note) || '';
+      const L = s => (window.t ? window.t(s) : s);
+      const val = prompt(`${L('Note sur')} ${name} ${L('(vide pour effacer)')} :`, existing);
+      if (val === null) return;
+      const r = await api('PUT', `/api/players/${encodeURIComponent(userId)}/note`, { note: val });
+      showToast(r && r.ok ? 'Note enregistrée' : failMsg('Échec de l\'enregistrement', r));
+      refreshActivity();
+    });
+    menu.appendChild(noteBtn);
+
     const banBtn = document.createElement('button');
     banBtn.type = 'button';
     banBtn.className = 'danger';
@@ -1115,6 +1134,9 @@ function renderSettingsEditor(settings, running) {
     : '✏️ Serveur éteint : les réglages sont modifiables. Les champs modifiés sont surlignés.';
   document.getElementById('saveSettingsBtn').style.display = running ? 'none' : 'inline-block';
   document.getElementById('stopToEditBtn').style.display = (running && isManager()) ? 'inline-block' : 'none';
+  // Presets de difficulté : seulement quand les réglages sont réellement modifiables (serveur éteint).
+  const presetRow = document.getElementById('settingsPresetRow');
+  if (presetRow) presetRow.style.display = (!running && isManager()) ? 'flex' : 'none';
 }
 
 document.getElementById('stopToEditBtn').addEventListener('click', async () => {
@@ -1154,6 +1176,7 @@ document.getElementById('loadSettingsBtn').addEventListener('click', async () =>
   if (settingsVisible) { // referme
     list.style.display = 'none';
     document.getElementById('saveSettingsBtn').style.display = 'none';
+    document.getElementById('settingsPresetRow').style.display = 'none';
     btn.textContent = 'Afficher les réglages';
     settingsVisible = false;
     return;
@@ -1624,6 +1647,224 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
   window.location.href = '/login.html';
 });
 
+// ---------- Performances serveur (FPS / RAM) ----------
+let perfRange = '24h';
+let perfMetric = 'fps';
+let perfPoints = [];
+const PERF_META = {
+  fps: { color: '#5ac8e2', fill: 'rgba(90, 200, 226, 0.12)', unit: '' },
+  mem: { color: '#c078e2', fill: 'rgba(192, 120, 226, 0.12)', unit: ' Mo' }
+};
+
+function drawPerfChart() {
+  const canvas = document.getElementById('perfChart');
+  const empty = document.getElementById('perfEmpty');
+  const peakEl = document.getElementById('perfPeak');
+  if (!canvas) return;
+  const meta = PERF_META[perfMetric];
+  const withData = perfPoints.filter(p => p[perfMetric] != null);
+  const hasData = withData.length >= 2;
+  canvas.style.display = hasData ? 'block' : 'none';
+  empty.style.display = hasData ? 'none' : 'block';
+  if (!hasData) { peakEl.textContent = ''; return; }
+
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth || canvas.parentElement.clientWidth;
+  const h = 160;
+  if (!w) { if (canvas.offsetParent !== null) requestAnimationFrame(drawPerfChart); return; }
+  canvas.width = Math.round(w * dpr);
+  canvas.height = Math.round(h * dpr);
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+
+  const now = Date.now();
+  const rangeMs = perfRange === '7d' ? 7 * 24 * 3600e3 : 24 * 3600e3;
+  const t0 = now - rangeMs;
+  const maxV = Math.max(1, ...withData.map(p => p[perfMetric]));
+  const pad = { l: 40, r: 8, t: 8, b: 20 };
+  const x = tt => pad.l + ((tt - t0) / rangeMs) * (w - pad.l - pad.r);
+  const y = v => pad.t + (1 - v / maxV) * (h - pad.t - pad.b);
+
+  ctx.strokeStyle = 'rgba(139, 150, 165, 0.15)';
+  ctx.fillStyle = 'rgba(139, 150, 165, 0.8)';
+  ctx.font = '10px sans-serif';
+  ctx.lineWidth = 1;
+  [0, Math.round(maxV / 2), maxV].forEach(v => {
+    const gy = y(v);
+    ctx.beginPath(); ctx.moveTo(pad.l, gy); ctx.lineTo(w - pad.r, gy); ctx.stroke();
+    ctx.fillText(String(v), 4, gy + 3);
+  });
+  for (let i = 0; i <= 3; i++) {
+    const tt = t0 + (rangeMs * i) / 3;
+    const label = perfRange === '7d'
+      ? new Date(tt).toLocaleDateString(undefined, { weekday: 'short' })
+      : new Date(tt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    ctx.fillText(label, Math.min(x(tt), w - 34), h - 6);
+  }
+
+  const segments = [];
+  let seg = [];
+  perfPoints.forEach(p => {
+    if (p[perfMetric] == null) { if (seg.length) segments.push(seg); seg = []; }
+    else seg.push(p);
+  });
+  if (seg.length) segments.push(seg);
+  segments.forEach(s => {
+    if (s.length < 2) return;
+    ctx.beginPath();
+    s.forEach((p, i) => (i ? ctx.lineTo(x(p.t), y(p[perfMetric])) : ctx.moveTo(x(p.t), y(p[perfMetric]))));
+    ctx.lineTo(x(s[s.length - 1].t), y(0));
+    ctx.lineTo(x(s[0].t), y(0));
+    ctx.closePath();
+    ctx.fillStyle = meta.fill;
+    ctx.fill();
+    ctx.beginPath();
+    s.forEach((p, i) => (i ? ctx.lineTo(x(p.t), y(p[perfMetric])) : ctx.moveTo(x(p.t), y(p[perfMetric]))));
+    ctx.strokeStyle = meta.color;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  });
+
+  const peak = withData.reduce((a, b) => (b[perfMetric] > a[perfMetric] ? b : a));
+  const unit = perfMetric === 'mem' ? ` ${t('Mo')}` : '';
+  peakEl.textContent = `${t('Pic :')} ${peak[perfMetric]}${unit} — ${new Date(peak.t).toLocaleString()}`;
+}
+
+async function refreshPerf() {
+  const data = await api('GET', `/api/perf-history?range=${perfRange}`);
+  if (!data) return;
+  perfPoints = data.points || [];
+  drawPerfChart();
+}
+document.querySelectorAll('.perf-metric-btn').forEach(btn => btn.addEventListener('click', () => {
+  perfMetric = btn.dataset.metric;
+  document.querySelectorAll('.perf-metric-btn').forEach(b => b.classList.toggle('active', b === btn));
+  drawPerfChart();
+}));
+document.querySelectorAll('.perf-range-btn').forEach(btn => btn.addEventListener('click', () => {
+  perfRange = btn.dataset.range;
+  document.querySelectorAll('.perf-range-btn').forEach(b => b.classList.toggle('active', b === btn));
+  refreshPerf();
+}));
+
+// ---------- Diagnostic / santé ----------
+async function refreshDiagnostics() {
+  if (!isManager()) return;
+  const d = await api('GET', '/api/diagnostics');
+  const list = document.getElementById('diagnosticList');
+  if (!list || !d) return;
+  const L = s => (window.t ? window.t(s) : s);
+  // [libellé, ok, warnOnly] — warnOnly => point d'attention (jaune) plutôt qu'erreur (rouge),
+  // pour les éléments optionnels (PalDefender/Discord non installés ≠ panne).
+  const items = [
+    ['Droits administrateur', d.elevated, false],
+    ['Serveur Palworld installé', d.serverInstalled, false],
+    ['Service Windows enregistré', d.serviceRegistered, false],
+    ['API REST configurée', d.restApiConfigured, false],
+    ['API du serveur joignable', d.apiReachable, true],
+    ['PalDefender configuré', d.paldefenderConfigured, true],
+    ['Discord configuré', d.discordConfigured, true],
+    ['Espace disque suffisant', !d.diskLow, false]
+  ];
+  let html = items.map(([label, ok, warn]) => {
+    const icon = ok ? '✅' : (warn ? '⚠️' : '❌');
+    const cls = ok ? 'ok' : (warn ? 'warn' : 'fail');
+    return `<li class="diag-${cls}">${icon} ${escapeHtml(L(label))}</li>`;
+  }).join('');
+  if (d.gamePort) html += `<li class="diag-info">🎮 ${escapeHtml(L('Port de jeu'))} : ${escapeHtml(String(d.gamePort))}</li>`;
+  list.innerHTML = html;
+}
+document.getElementById('refreshDiagnosticBtn').addEventListener('click', refreshDiagnostics);
+
+// ---------- Annonces récurrentes ----------
+let asMessages = [];
+function renderAsMessages() {
+  const wrap = document.getElementById('asMessages');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  if (!asMessages.length) { wrap.innerHTML = '<span class="muted-hint">Aucun message — ajoutes-en un.</span>'; return; }
+  asMessages.forEach((m, i) => {
+    const chip = document.createElement('span');
+    chip.className = 'time-chip';
+    chip.textContent = m;
+    const x = document.createElement('button');
+    x.type = 'button';
+    x.textContent = '×';
+    x.title = 'Retirer';
+    x.addEventListener('click', () => { asMessages.splice(i, 1); renderAsMessages(); });
+    chip.appendChild(x);
+    wrap.appendChild(chip);
+  });
+}
+function updateAsSummary(s) {
+  const el = document.getElementById('asSummary');
+  if (!el) return;
+  el.textContent = s.enabled
+    ? `${t('Annonces récurrentes activées')} (${asMessages.length} · ${s.intervalMinutes} min)`
+    : t('⏸️ Annonces récurrentes désactivées.');
+}
+async function refreshAnnounceSchedule() {
+  const data = await api('GET', '/api/announce/schedule');
+  if (!data || !data.schedule) return;
+  const s = data.schedule;
+  document.getElementById('asEnabled').checked = s.enabled;
+  document.getElementById('asInterval').value = s.intervalMinutes;
+  asMessages = s.messages || [];
+  renderAsMessages();
+  updateAsSummary(s);
+}
+document.getElementById('asAddMessage').addEventListener('click', () => {
+  const input = document.getElementById('asNewMessage');
+  const v = input.value.trim();
+  if (!v) return;
+  asMessages.push(v);
+  input.value = '';
+  renderAsMessages();
+});
+document.getElementById('asNewMessage').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); document.getElementById('asAddMessage').click(); }
+});
+document.getElementById('asSaveBtn').addEventListener('click', async () => {
+  const body = {
+    enabled: document.getElementById('asEnabled').checked,
+    intervalMinutes: parseInt(document.getElementById('asInterval').value, 10) || 30,
+    messages: asMessages
+  };
+  const r = await api('POST', '/api/announce/schedule', body);
+  if (r && r.ok) {
+    showToast('Planning enregistré');
+    asMessages = r.schedule.messages;
+    renderAsMessages();
+    updateAsSummary(r.schedule);
+    refreshActivity();
+  } else {
+    showToast(failMsg('Échec de l\'enregistrement du planning', r));
+  }
+});
+
+// ---------- Presets de difficulté (éditeur de réglages) ----------
+// N'écrit que les clés réellement présentes dans le .ini chargé (et modifiables), puis marque les
+// champs comme modifiés : l'utilisateur relit et clique sur Enregistrer (rien n'est appliqué seul).
+const SETTINGS_PRESETS = {
+  casual:   { ExpRate: '2.000000', PalCaptureRate: '2.000000', DeathPenalty: 'None', PlayerDamageRateAttack: '2.000000', EnemyDamageRateAttack: '0.500000', CollectionDropRate: '2.000000', PalStomachDecreaceRate: '0.500000', PlayerStomachDecreaceRate: '0.500000' },
+  normal:   { ExpRate: '1.000000', PalCaptureRate: '1.000000', DeathPenalty: 'All', PlayerDamageRateAttack: '1.000000', EnemyDamageRateAttack: '1.000000', CollectionDropRate: '1.000000', PalStomachDecreaceRate: '1.000000', PlayerStomachDecreaceRate: '1.000000' },
+  hardcore: { ExpRate: '0.500000', PalCaptureRate: '1.000000', DeathPenalty: 'All', PlayerDamageRateAttack: '1.000000', EnemyDamageRateAttack: '1.500000', CollectionDropRate: '1.000000', PalStomachDecreaceRate: '1.500000', PlayerStomachDecreaceRate: '1.500000' }
+};
+document.querySelectorAll('#settingsPresetRow [data-preset]').forEach(btn => btn.addEventListener('click', () => {
+  const preset = SETTINGS_PRESETS[btn.dataset.preset];
+  if (!preset) return;
+  let applied = 0;
+  Object.entries(preset).forEach(([key, value]) => {
+    const input = document.querySelector(`#settingsList [data-key="${key}"]`);
+    if (!input || input.disabled) return;
+    input.value = value;
+    input.dispatchEvent(new Event('input'));
+    applied++;
+  });
+  showToast(applied ? `${t('Preset appliqué')} (${applied}) — ${t('vérifie puis Enregistrer')}` : t('Aucun réglage correspondant'));
+}));
+
 // ---------- Navigation par onglets ----------
 function activateTab(name) {
   const btn = document.querySelector(`.tab-btn[data-tab="${name}"]`);
@@ -1636,9 +1877,10 @@ function activateTab(name) {
   if (name === 'map') requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
   // Idem pour le graphique de fréquentation (onglet Tableau de bord) : redraw à l'affichage, sinon
   // il reste vide s'il a été rendu alors que l'onglet était masqué (dernier onglet visité ≠ dash).
-  if (name === 'dash') requestAnimationFrame(drawCountsChart);
+  if (name === 'dash') { requestAnimationFrame(drawCountsChart); requestAnimationFrame(drawPerfChart); }
   if (name === 'plugins') { refreshPlugins(); refreshPaldefenderApiStatus(); }
   if (name === 'activity') refreshChat();
+  if (name === 'diagnostic') refreshDiagnostics();
 }
 
 document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -1664,6 +1906,8 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
   refreshDashboardUpdate();
   refreshBases();
   refreshCounts();
+  refreshPerf();
+  refreshAnnounceSchedule();
   refreshChat();
   setInterval(refreshStatus, 15000);
   setInterval(refreshActivity, 30000);
@@ -1672,4 +1916,5 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
   setInterval(refreshDiskSpace, 5 * 60000);
   setInterval(refreshBases, 5 * 60000); // les bases changent rarement, même cadence que le sondage serveur
   setInterval(refreshCounts, 5 * 60000); // la fréquentation gagne un point toutes les 5 min
+  setInterval(refreshPerf, 5 * 60000); // les perfs gagnent un point toutes les 5 min
 })();

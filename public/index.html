@@ -26,6 +26,7 @@
       <button class="tab-btn" data-tab="backups">Sauvegardes</button>
       <button class="tab-btn" data-tab="settings" data-manager-only>Réglages</button>
       <button class="tab-btn" data-tab="plugins" data-manager-only>Plugins</button>
+      <button class="tab-btn" data-tab="diagnostic" data-manager-only>Diagnostic</button>
       <button class="tab-btn" data-tab="accounts">Comptes</button>
     </nav>
 
@@ -148,6 +149,23 @@
           <div id="countsTooltip" class="chart-tooltip" style="display:none;"></div>
         </div>
         <p class="empty" id="countsEmpty" style="display:none;">Pas encore assez de données — la courbe se remplit toutes les 5 minutes.</p>
+      </div>
+
+      <div class="panel">
+        <h2>Performances serveur</h2>
+        <div class="chart-range-row">
+          <button class="action perf-metric-btn active" data-metric="fps" type="button">FPS</button>
+          <button class="action perf-metric-btn" data-metric="mem" type="button">RAM (Mo)</button>
+          <span class="perf-sep"></span>
+          <button class="action perf-range-btn active" data-range="24h" type="button">24 h</button>
+          <button class="action perf-range-btn" data-range="7d" type="button">7 jours</button>
+          <span class="muted-hint" id="perfPeak"></span>
+        </div>
+        <div class="chart-wrap">
+          <canvas id="perfChart" height="160"></canvas>
+          <div id="perfTooltip" class="chart-tooltip" style="display:none;"></div>
+        </div>
+        <p class="empty" id="perfEmpty" style="display:none;">Pas encore assez de données — la courbe se remplit toutes les 5 minutes.</p>
       </div>
 
       <div class="panel" data-manager-only>
@@ -350,6 +368,33 @@
             </div>
             <p class="empty" id="rsSummary" style="margin-top:10px;"></p>
           </div>
+
+          <div class="panel">
+            <h2>Annonces récurrentes</h2>
+            <label class="switch-row">
+              <input type="checkbox" id="asEnabled"> Activer les annonces récurrentes
+            </label>
+
+            <div class="field-block">
+              <span class="field-label">Intervalle</span>
+              <input type="number" id="asInterval" min="5" max="1440" value="30" style="width:80px;">
+              <span class="muted-hint">minutes entre chaque message</span>
+            </div>
+
+            <div class="field-block">
+              <span class="field-label">Messages (diffusés en boucle)</span>
+              <div id="asMessages" class="times-list"></div>
+              <div class="time-add">
+                <input type="text" id="asNewMessage" placeholder="Nouveau message…" maxlength="200" style="flex:1; min-width:180px;">
+                <button class="action" id="asAddMessage" type="button">Ajouter</button>
+              </div>
+            </div>
+
+            <div class="btn-row" data-manager-only style="margin-top:12px;">
+              <button class="action primary" id="asSaveBtn" type="button">Enregistrer</button>
+            </div>
+            <p class="empty" id="asSummary" style="margin-top:10px;"></p>
+          </div>
         </div>
 
         <div class="settings-col">
@@ -400,6 +445,12 @@
           <button class="action primary" id="saveSettingsBtn" type="button" style="display:none;">Enregistrer les modifications</button>
         </div>
         <p class="empty" id="settingsHint" style="margin-top:10px;">Modifiable uniquement serveur éteint (Palworld ne relit ce fichier qu'au démarrage).</p>
+        <div class="preset-row" id="settingsPresetRow" style="display:none; margin:10px 0;">
+          <span class="muted-hint">Presets de difficulté :</span>
+          <button class="action" data-preset="casual" type="button">Casual</button>
+          <button class="action" data-preset="normal" type="button">Normal</button>
+          <button class="action" data-preset="hardcore" type="button">Hardcore</button>
+        </div>
         <div class="settings-grid" id="settingsList" style="display:none;"></div>
       </div>
     </section>
@@ -434,6 +485,18 @@
         </div>
       </div>
       <p class="muted-hint">Installation/désinstallation possibles uniquement serveur éteint (les fichiers sont chargés par le processus en cours d'exécution).</p>
+    </section>
+
+    <!-- ============ DIAGNOSTIC ============ -->
+    <section class="tab-content" id="tab-diagnostic">
+      <div class="panel">
+        <h2>Diagnostic</h2>
+        <p class="muted-hint" style="display:block; margin-bottom:12px;">État des sous-systèmes du dashboard et du serveur, pour repérer rapidement ce qui bloque.</p>
+        <ul class="checklist" id="diagnosticList"></ul>
+        <div class="btn-row" style="margin-top:12px;">
+          <button class="action" id="refreshDiagnosticBtn" type="button">Rafraîchir</button>
+        </div>
+      </div>
     </section>
 
     <!-- ============ COMPTES ============ -->

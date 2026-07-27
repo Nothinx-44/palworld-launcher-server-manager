@@ -18,6 +18,9 @@ const activityLog = require('./lib/activityLog');
 const playerTracker = require('./lib/playerTracker');
 const baseTracker = require('./lib/baseTracker');
 const playerCounts = require('./lib/playerCounts');
+const perfHistory = require('./lib/perfHistory');
+const playerNotes = require('./lib/playerNotes');
+const announceScheduleCfg = require('./lib/announceSchedule');
 const watchdog = require('./lib/watchdog');
 const users = require('./lib/users');
 const steamUpdate = require('./lib/steamUpdate');
@@ -1202,6 +1205,66 @@ app.get('/api/player-counts', requireAuth, (req, res) => {
   res.json({ points: playerCounts.points(range) });
 });
 
+// ---------- Performances serveur (FPS + RAM, échantillonnées par lib/perfHistory.js) ----------
+app.get('/api/perf-history', requireAuth, (req, res) => {
+  const range = req.query.range === '7d' ? 7 * 24 * 3600 * 1000 : 24 * 3600 * 1000;
+  res.json({ points: perfHistory.points(range) });
+});
+
+// ---------- Diagnostic / santé (admin + user) ----------
+// Agrège l'état des sous-systèmes en un coup d'œil, pour dépanner rapidement (l'admin qui reçoit
+// un « ça marche pas » d'un utilisateur voit tout de suite ce qui cloche).
+app.get('/api/diagnostics', requireAuth, requireManager, async (req, res) => {
+  try {
+    const status = await serverSetup.getStatus();
+    const apiReachable = await getPalworldApi().get('/v1/api/info').then(r => r.status === 200).catch(() => false);
+    const disks = checkDiskSpace();
+    res.json({
+      elevated: status.elevated,
+      serverInstalled: status.serverInstalled,
+      steamCmdPresent: status.steamCmdPresent,
+      serviceRegistered: status.serviceRegistered,
+      restApiConfigured: status.restApiConfigured,
+      apiReachable,
+      paldefenderConfigured: !!process.env.PALDEFENDER_API_TOKEN,
+      discordConfigured: !!process.env.DISCORD_WEBHOOK_URL,
+      diskLow: disks.some(d => d.low),
+      gamePort: getGamePort()
+    });
+  } catch (err) {
+    res.status(500).json({ error: String(err.message || err) });
+  }
+});
+
+// ---------- Notes de modération sur un joueur (admin + user) ----------
+app.get('/api/players/:userId/note', requireAuth, requireManager, (req, res) => {
+  res.json({ note: playerNotes.get(req.params.userId) });
+});
+
+app.put('/api/players/:userId/note', requireAuth, requireManager, async (req, res) => {
+  const note = (req.body && req.body.note) || '';
+  try {
+    const saved = await playerNotes.set(req.params.userId, note, req.session.user.username);
+    activityLog.log(req.session.user.username, 'player-note', req.params.userId);
+    res.json({ ok: true, note: saved });
+  } catch (err) {
+    res.status(500).json({ error: String(err.message || err) });
+  }
+});
+
+// ---------- Annonces récurrentes (lecture pour tous, modification admin/user) ----------
+app.get('/api/announce/schedule', requireAuth, (req, res) => {
+  res.json({ schedule: announceScheduleCfg.load() });
+});
+
+app.post('/api/announce/schedule', requireAuth, requireManager, (req, res) => {
+  const saved = announceScheduleCfg.save(req.body || {});
+  rescheduleAnnouncements();
+  activityLog.log(req.session.user.username, 'announce-schedule-change',
+    saved.enabled ? `toutes les ${saved.intervalMinutes} min, ${saved.messages.length} message(s)` : 'désactivé');
+  res.json({ ok: true, schedule: saved });
+});
+
 // Diagnostic (admin) : /v1/api/game-data (Palworld vanilla) est absent sur certaines versions
 // (renvoie 404) — on inspecte donc plutôt ce que l'API PalDefender expose réellement (guildes,
 // joueurs), noms de champs exacts inclus, pour brancher guildes/bases dessus sans deviner la casse.
@@ -1314,8 +1377,31 @@ setInterval(checkDiskSpace, 30 * 60 * 1000);
 playerTracker.start(60000);
 baseTracker.start(); // guildes + bases (API PalDefender), sondé bien moins souvent (5 min par défaut)
 playerCounts.start(); // fréquentation : un point toutes les 5 min, 7 jours d'historique
+perfHistory.start(); // perfs serveur (FPS + RAM) : un point toutes les 5 min, 7 jours d'historique
 chatHistory.start(); // chat en jeu : suit console.log toutes les 5 s, 30 j d'historique
 watchdog.start();
+
+// Annonces récurrentes : un intervalle unique (recréé à chaque changement de config) qui diffuse
+// un message en jeu à la cadence choisie, en tournant dans la liste. Ne diffuse que si le serveur
+// répond (sinon le tick est sauté sans erreur).
+let announceTimer = null;
+let announceIndex = 0;
+function rescheduleAnnouncements() {
+  if (announceTimer) { clearInterval(announceTimer); announceTimer = null; }
+  const cfg = announceScheduleCfg.load();
+  if (!cfg.enabled || !cfg.messages.length) return;
+  announceTimer = setInterval(async () => {
+    const c = announceScheduleCfg.load();
+    if (!c.enabled || !c.messages.length) return;
+    const message = c.messages[announceIndex % c.messages.length];
+    announceIndex++;
+    try {
+      const r = await getPalworldApi().post('/v1/api/announce', { message });
+      if (r.status === 200) activityLog.log('scheduler', 'auto-announce', message);
+    } catch { /* serveur injoignable : tick sauté silencieusement */ }
+  }, cfg.intervalMinutes * 60000);
+}
+rescheduleAnnouncements();
 
 // ---------- Pages ----------
 app.get('/', (req, res) => {
